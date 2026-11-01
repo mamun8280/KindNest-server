@@ -49,7 +49,18 @@ app.post("/create-event", async (req, res) => {
   }
 });
 
+app.get("/ManageEvents", async (req, res) => {
+  try {
+    const events = await ManageEventcollection.find().toArray();
 
+    res.send(events);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({
+      message: "Failed to get events",
+    });
+  }
+});
 
 
 
