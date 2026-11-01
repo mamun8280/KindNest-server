@@ -37,6 +37,12 @@ const db = mongoclient.db("kindnest");
 const ManageEventcollection = db.collection("ManageEvents");
 const JoinedEventscollection = db.collection("JoinedEvents");
 
+// Prevent duplicate Join
+await JoinedEventscollection.createIndex(
+  { eventId: 1, userEmail: 1 },
+  { unique: true }
+);
+
 // =====================================
 // Authentication Middleware
 // =====================================
@@ -70,7 +76,6 @@ async function verifyUser(req, res, next) {
     }
 
     req.user = sessionData.user;
-
     next();
   } catch (error) {
     console.error("Authentication Error:", error);
@@ -96,7 +101,6 @@ app.post("/create-event", verifyUser, async (req, res) => {
       createdAt: new Date().toISOString(),
     };
 
-    // Client cannot override the creator's email
     const result = await ManageEventcollection.insertOne(eventData);
 
     res.status(201).send({
@@ -114,34 +118,15 @@ app.post("/create-event", verifyUser, async (req, res) => {
   }
 });
 
-// =====================================
-// Upcoming Events (Public)
-// =====================================
 
-app.get("/upcoming-events", async (req, res) => {
-  try {
-    const today = new Date().toISOString().split("T")[0];
 
-    const events = await ManageEventcollection
-      .find({
-        eventDate: { $gte: today },
-      })
-      .sort({ eventDate: 1 })
-      .toArray();
 
-    res.send(events);
-  } catch (error) {
-    console.error("Upcoming Events Error:", error);
 
-    res.status(500).send({
-      message: "Failed to get upcoming events.",
-    });
-  }
-});
+
+
 
 // =====================================
 // Manage Events (Private)
-// Only logged-in user's events
 // =====================================
 
 app.get("/ManageEvents", verifyUser, async (req, res) => {
@@ -196,6 +181,125 @@ app.get("/ManageEvents/:id", async (req, res) => {
 });
 
 // =====================================
+// Join Event (Private)
+// =====================================
+
+app.post("/join-event/:id", verifyUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid event ID.",
+      });
+    }
+
+    const event = await ManageEventcollection.findOne({
+      _id: new ObjectId(id),
+    });
+
+    if (!event) {
+      return res.status(404).send({
+        success: false,
+        message: "Event not found.",
+      });
+    }
+
+    // Event owner cannot join own event
+    if (event.creatorEmail === req.user.email) {
+      return res.status(400).send({
+        success: false,
+        message: "You cannot join your own event.",
+      });
+    }
+
+    const joinedData = {
+      eventId: event._id,
+      eventTitle: event.eventTitle,
+      userEmail: req.user.email,
+      joinedAt: new Date().toISOString(),
+    };
+
+    await JoinedEventscollection.insertOne(joinedData);
+
+    res.status(201).send({
+      success: true,
+      message: "You have successfully joined this event!",
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).send({
+        success: false,
+        message: "You have already joined this event.",
+      });
+    }
+
+    console.error("Join Event Error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to join event.",
+    });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+// =====================================
+// Joined Events (Private)
+// Sort by Event Date (Ascending)
+// =====================================
+
+app.get("/joined-events", verifyUser, async (req, res) => {
+  try {
+    const joinedRecords = await JoinedEventscollection
+      .find({ userEmail: req.user.email })
+      .toArray();
+
+    const joinedEvents = await Promise.all(
+      joinedRecords.map(async (record) => {
+        const event = await ManageEventcollection.findOne({
+          _id: record.eventId,
+        });
+
+        if (!event) return null;
+
+        return {
+          ...event,
+          joinedAt: record.joinedAt,
+        };
+      })
+    );
+
+    // Earliest event date first
+    const sortedEvents = joinedEvents
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          new Date(a.eventDate).getTime() -
+          new Date(b.eventDate).getTime()
+      );
+
+    res.send(sortedEvents);
+  } catch (error) {
+    console.error("Joined Events Error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to get joined events.",
+    });
+  }
+});
+
+// =====================================
 // Edit Event (Private)
 // Only event owner can edit
 // =====================================
@@ -210,7 +314,6 @@ app.patch("/ManageEvents/:id", verifyUser, async (req, res) => {
       });
     }
 
-    // Only allow event fields to be updated
     const allowedFields = [
       "eventTitle",
       "eventType",
@@ -248,6 +351,14 @@ app.patch("/ManageEvents/:id", verifyUser, async (req, res) => {
       return res.status(404).send({
         message: "Event not found or you are not the owner.",
       });
+    }
+
+    // Update saved event title in JoinedEvents
+    if (updateData.eventTitle !== undefined) {
+      await JoinedEventscollection.updateMany(
+        { eventId: new ObjectId(id) },
+        { $set: { eventTitle: updateData.eventTitle } }
+      );
     }
 
     res.send({
@@ -290,6 +401,11 @@ app.delete("/ManageEvents/:id", verifyUser, async (req, res) => {
       });
     }
 
+    // Delete related join records
+    await JoinedEventscollection.deleteMany({
+      eventId: new ObjectId(id),
+    });
+
     res.send({
       success: true,
       message: "Event deleted successfully!",
@@ -303,7 +419,9 @@ app.delete("/ManageEvents/:id", verifyUser, async (req, res) => {
   }
 });
 
-
+// =====================================
+// Root Route
+// =====================================
 
 app.get("/", (req, res) => {
   res.send("KindNest server is fine!");
