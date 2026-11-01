@@ -119,9 +119,30 @@ app.post("/create-event", verifyUser, async (req, res) => {
 });
 
 
+// =====================================
+// Upcoming Events (Public)
+// =====================================
 
+app.get("/upcoming-events", async (req, res) => {
+  try {
+    const today = new Date().toISOString().split("T")[0];
 
+    const events = await ManageEventcollection
+      .find({
+        eventDate: { $gte: today },
+      })
+      .sort({ eventDate: 1 })
+      .toArray();
 
+    res.send(events);
+  } catch (error) {
+    console.error("Upcoming Events Error:", error);
+
+    res.status(500).send({
+      message: "Failed to get upcoming events.",
+    });
+  }
+});
 
 
 
