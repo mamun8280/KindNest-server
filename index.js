@@ -28,6 +28,8 @@ export async function connectToMongoDB() {
 const mongoclient = await connectToMongoDB();
 const db = mongoclient.db("kindnest");
 const ManageEventcollection = db.collection("ManageEvents");
+
+
 // Create Event
 app.post("/create-event", async (req, res) => {
   try {
@@ -50,6 +52,8 @@ app.post("/create-event", async (req, res) => {
   }
 });
 
+
+
 app.get("/ManageEvents", async (req, res) => {
   try {
     const events = await ManageEventcollection.find().toArray();
@@ -63,37 +67,33 @@ app.get("/ManageEvents", async (req, res) => {
   }
 });
 
-// Get Single Event Details
-app.get("/ManageEvents/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
 
-    if (!ObjectId.isValid(id)) {
-      return res.status(400).send({
-        success: false,
-        message: "Invalid event ID",
-      });
-    }
-    const event = await ManageEventcollection.findOne({
-      _id: new ObjectId(id),
-    });
 
-    if (!event) {
-      return res.status(404).send({
-        success: false,
-        message: "Event not found",
-      });
-    }
-    res.status(200).send(event);
-  } catch (error) {
-    console.error("Get Single Event Error:", error);
+app.get("/ManageEvents/:id", async(req, res) => {
+  const {id} = req.params
+  const result =await ManageEventcollection.findOne({_id: new ObjectId(id)})
 
-    res.status(500).send({
-      success: false,
-      message: "Failed to get event details",
-    });
-  }
+  res.send(result)
+ 
+})
+
+
+
+
+app.patch("/ManageEvents/:id", async(req, res) =>{
+  const {id} = req.params;
+  const updateData = req.body;
+
+  const result = await ManageEventcollection.updateOne(
+    {_id: new ObjectId(id)},
+    {$set: updateData}
+  );
+
+  res.json(result);
 });
+
+
+
 
 
 
