@@ -118,7 +118,6 @@ app.post("/create-event", verifyUser, async (req, res) => {
   }
 });
 
-
 // =====================================
 // Upcoming Events (Public)
 // =====================================
@@ -143,8 +142,6 @@ app.get("/upcoming-events", async (req, res) => {
     });
   }
 });
-
-
 
 // =====================================
 // Manage Events (Private)
@@ -265,14 +262,39 @@ app.post("/join-event/:id", verifyUser, async (req, res) => {
   }
 });
 
+// =====================================
+// Check Joined Status (Private)
+// =====================================
 
+app.get("/joined-events/:id", verifyUser, async (req, res) => {
+  try {
+    const { id } = req.params;
 
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid event ID.",
+      });
+    }
 
+    const joinedEvent = await JoinedEventscollection.findOne({
+      eventId: new ObjectId(id),
+      userEmail: req.user.email,
+    });
 
+    res.send({
+      success: true,
+      joined: !!joinedEvent,
+    });
+  } catch (error) {
+    console.error("Check Joined Status Error:", error);
 
-
-
-
+    res.status(500).send({
+      success: false,
+      message: "Failed to check joined status.",
+    });
+  }
+});
 
 // =====================================
 // Joined Events (Private)
@@ -300,7 +322,6 @@ app.get("/joined-events", verifyUser, async (req, res) => {
       })
     );
 
-    // Earliest event date first
     const sortedEvents = joinedEvents
       .filter(Boolean)
       .sort(
@@ -316,6 +337,48 @@ app.get("/joined-events", verifyUser, async (req, res) => {
     res.status(500).send({
       success: false,
       message: "Failed to get joined events.",
+    });
+  }
+});
+
+// =====================================
+// Leave Event (Private)
+// Delete only current user's Join record
+// =====================================
+
+app.delete("/leave-event/:id", verifyUser, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid event ID.",
+      });
+    }
+
+    const result = await JoinedEventscollection.deleteOne({
+      eventId: new ObjectId(id),
+      userEmail: req.user.email,
+    });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "You have not joined this event.",
+      });
+    }
+
+    res.send({
+      success: true,
+      message: "You have successfully left the event.",
+    });
+  } catch (error) {
+    console.error("Leave Event Error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to leave event.",
     });
   }
 });
