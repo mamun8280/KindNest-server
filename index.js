@@ -11,7 +11,7 @@ const PORT = 8000;
 // Middleware
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: process.env.CORS_ORIGIN,
     credentials: true,
   })
 );
@@ -35,7 +35,7 @@ await JoinedEventscollection.createIndex(
 
 // JWT Authentication
 const JWKS = createRemoteJWKSet(
-  new URL("http://localhost:3000/api/auth/jwks")
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`)
 );
 
 const verifyToken = async (req, res, next) => {
