@@ -3,10 +3,12 @@ import express from "express";
 import cors from "cors";
 import { MongoClient, ObjectId } from "mongodb";
 import "dotenv/config";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const app = express();
 const PORT = 8000;
 
+// Middleware
 app.use(
   cors({
     origin: "http://localhost:3000",
@@ -25,54 +27,82 @@ const db = client.db("kindnest");
 const ManageEventcollection = db.collection("ManageEvents");
 const JoinedEventscollection = db.collection("JoinedEvents");
 
-// Prevent duplicate Join
+// Prevent Duplicate Join
 await JoinedEventscollection.createIndex(
   { eventId: 1, userEmail: 1 },
   { unique: true }
 );
 
-// Authentication Middleware
-async function verifyUser(req, res, next) {
-  try {
-    const response = await fetch(
-      "http://localhost:3000/api/auth/get-session",
-      {
-        headers: {
-          cookie: req.headers.cookie || "",
-        },
-      }
-    );
+// JWT Authentication
+const JWKS = createRemoteJWKSet(
+  new URL("http://localhost:3000/api/auth/jwks")
+);
 
-    if (!response.ok) {
-      return res.status(401).send({
-        message: "Please login first.",
-      });
-    }
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
 
-    const session = await response.json();
-
-    if (!session?.user?.email) {
-      return res.status(401).send({
-        message: "Unauthorized.",
-      });
-    }
-
-    req.user = session.user;
-    next();
-  } catch (error) {
-    console.error("Auth Error:", error);
-
-    return res.status(500).send({
-      message: "Authentication verification failed.",
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).send({
+      message: "Unauthorized! Please login.",
     });
   }
-}
 
-// Create Event
-app.post("/create-event", verifyUser, async (req, res) => {
+  const token = authHeader.split(" ")[1];
+
   try {
+    const { payload } = await jwtVerify(token, JWKS);
+
+    req.user = payload;
+
+    if (!req.user.email) {
+      return res.status(401).send({
+        message: "User email not found in token.",
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error("Token Verification Error:", error);
+
+    return res.status(401).send({
+      message: "Invalid or expired token.",
+    });
+  }
+};
+
+// CREATE EVENT
+app.post("/create-event", verifyToken, async (req, res) => {
+  try {
+    const {
+      eventTitle,
+      eventType,
+      eventDate,
+      location,
+      imageUrl,
+      description,
+    } = req.body;
+
+    if (
+      !eventTitle?.trim() ||
+      !eventType?.trim() ||
+      !eventDate ||
+      !location?.trim() ||
+      !imageUrl?.trim() ||
+      !description?.trim()
+    ) {
+      return res.status(400).send({
+        success: false,
+        message: "Please provide all required information.",
+      });
+    }
+
     const eventData = {
-      ...req.body,
+      eventTitle: eventTitle.trim(),
+      eventType: eventType.trim(),
+      eventDate,
+      location: location.trim(),
+      imageUrl: imageUrl.trim(),
+      description: description.trim(),
       creatorEmail: req.user.email,
       createdAt: new Date().toISOString(),
     };
@@ -88,12 +118,13 @@ app.post("/create-event", verifyUser, async (req, res) => {
     console.error("Create Event Error:", error);
 
     res.status(500).send({
+      success: false,
       message: "Failed to create event.",
     });
   }
 });
 
-// Upcoming Events
+// UPCOMING EVENTS
 app.get("/upcoming-events", async (req, res) => {
   try {
     const today = new Date().toISOString().split("T")[0];
@@ -113,8 +144,8 @@ app.get("/upcoming-events", async (req, res) => {
   }
 });
 
-// Manage Events - Own Events
-app.get("/ManageEvents", verifyUser, async (req, res) => {
+// MANAGE EVENTS - OWN EVENTS
+app.get("/ManageEvents", verifyToken, async (req, res) => {
   try {
     const events = await ManageEventcollection
       .find({ creatorEmail: req.user.email })
@@ -131,7 +162,7 @@ app.get("/ManageEvents", verifyUser, async (req, res) => {
   }
 });
 
-// Event Details - Public
+// EVENT DETAILS
 app.get("/ManageEvents/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -162,8 +193,8 @@ app.get("/ManageEvents/:id", async (req, res) => {
   }
 });
 
-// Join Event
-app.post("/join-event/:id", verifyUser, async (req, res) => {
+// JOIN EVENT
+app.post("/join-event/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -215,8 +246,8 @@ app.post("/join-event/:id", verifyUser, async (req, res) => {
   }
 });
 
-// Check Join Status
-app.get("/joined-events/:id", verifyUser, async (req, res) => {
+// CHECK JOIN STATUS
+app.get("/joined-events/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -246,8 +277,8 @@ app.get("/joined-events/:id", verifyUser, async (req, res) => {
   }
 });
 
-// Joined Events
-app.get("/joined-events", verifyUser, async (req, res) => {
+// JOINED EVENTS
+app.get("/joined-events", verifyToken, async (req, res) => {
   try {
     const joinedRecords = await JoinedEventscollection
       .find({ userEmail: req.user.email })
@@ -286,8 +317,8 @@ app.get("/joined-events", verifyUser, async (req, res) => {
   }
 });
 
-// Leave Event - NEW API
-app.delete("/leave-event/:id", verifyUser, async (req, res) => {
+// LEAVE EVENT
+app.delete("/leave-event/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -324,8 +355,8 @@ app.delete("/leave-event/:id", verifyUser, async (req, res) => {
   }
 });
 
-// Edit Event - Owner Only
-app.patch("/ManageEvents/:id", verifyUser, async (req, res) => {
+// EDIT EVENT - OWNER ONLY
+app.patch("/ManageEvents/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -394,8 +425,8 @@ app.patch("/ManageEvents/:id", verifyUser, async (req, res) => {
   }
 });
 
-// Delete Event - Owner Only
-app.delete("/ManageEvents/:id", verifyUser, async (req, res) => {
+// DELETE EVENT - OWNER ONLY
+app.delete("/ManageEvents/:id", verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -433,12 +464,12 @@ app.delete("/ManageEvents/:id", verifyUser, async (req, res) => {
   }
 });
 
-// Root Route
+// ROOT ROUTE
 app.get("/", (req, res) => {
   res.send("KindNest server is fine!");
 });
 
-// Start Server
+// START SERVER
 app.listen(PORT, () => {
   console.log(`KindNest server listening on port ${PORT}`);
 });
