@@ -473,3 +473,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`KindNest server listening on port ${PORT}`);
 });
+
+export default app;
