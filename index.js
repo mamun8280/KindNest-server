@@ -7,7 +7,6 @@ import "dotenv/config";
 const app = express();
 const PORT = 8000;
 
-// Middleware
 app.use(
   cors({
     origin: "http://localhost:3000",
@@ -19,20 +18,9 @@ app.use(express.json());
 
 // MongoDB Connection
 const client = new MongoClient(process.env.MONGODB_URI);
+await client.connect();
 
-export async function connectToMongoDB() {
-  try {
-    await client.connect();
-    console.log("You successfully connected to MongoDB!");
-    return client;
-  } catch (error) {
-    console.error("MongoDB Connection Error:", error);
-    throw error;
-  }
-}
-
-const mongoclient = await connectToMongoDB();
-const db = mongoclient.db("kindnest");
+const db = client.db("kindnest");
 
 const ManageEventcollection = db.collection("ManageEvents");
 const JoinedEventscollection = db.collection("JoinedEvents");
@@ -43,16 +31,12 @@ await JoinedEventscollection.createIndex(
   { unique: true }
 );
 
-// =====================================
 // Authentication Middleware
-// =====================================
-
 async function verifyUser(req, res, next) {
   try {
     const response = await fetch(
       "http://localhost:3000/api/auth/get-session",
       {
-        method: "GET",
         headers: {
           cookie: req.headers.cookie || "",
         },
@@ -61,42 +45,34 @@ async function verifyUser(req, res, next) {
 
     if (!response.ok) {
       return res.status(401).send({
-        success: false,
         message: "Please login first.",
       });
     }
 
-    const sessionData = await response.json();
+    const session = await response.json();
 
-    if (!sessionData?.user?.email) {
+    if (!session?.user?.email) {
       return res.status(401).send({
-        success: false,
-        message: "Unauthorized. Please login first.",
+        message: "Unauthorized.",
       });
     }
 
-    req.user = sessionData.user;
+    req.user = session.user;
     next();
   } catch (error) {
-    console.error("Authentication Error:", error);
+    console.error("Auth Error:", error);
 
     return res.status(500).send({
-      success: false,
       message: "Authentication verification failed.",
     });
   }
 }
 
-// =====================================
-// Create Event (Private)
-// =====================================
-
+// Create Event
 app.post("/create-event", verifyUser, async (req, res) => {
   try {
-    const data = req.body;
-
     const eventData = {
-      ...data,
+      ...req.body,
       creatorEmail: req.user.email,
       createdAt: new Date().toISOString(),
     };
@@ -112,24 +88,18 @@ app.post("/create-event", verifyUser, async (req, res) => {
     console.error("Create Event Error:", error);
 
     res.status(500).send({
-      success: false,
       message: "Failed to create event.",
     });
   }
 });
 
-// =====================================
-// Upcoming Events (Public)
-// =====================================
-
+// Upcoming Events
 app.get("/upcoming-events", async (req, res) => {
   try {
     const today = new Date().toISOString().split("T")[0];
 
     const events = await ManageEventcollection
-      .find({
-        eventDate: { $gte: today },
-      })
+      .find({ eventDate: { $gte: today } })
       .sort({ eventDate: 1 })
       .toArray();
 
@@ -143,10 +113,7 @@ app.get("/upcoming-events", async (req, res) => {
   }
 });
 
-// =====================================
-// Manage Events (Private)
-// =====================================
-
+// Manage Events - Own Events
 app.get("/ManageEvents", verifyUser, async (req, res) => {
   try {
     const events = await ManageEventcollection
@@ -164,10 +131,7 @@ app.get("/ManageEvents", verifyUser, async (req, res) => {
   }
 });
 
-// =====================================
-// Event Details (Public)
-// =====================================
-
+// Event Details - Public
 app.get("/ManageEvents/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -178,17 +142,17 @@ app.get("/ManageEvents/:id", async (req, res) => {
       });
     }
 
-    const result = await ManageEventcollection.findOne({
+    const event = await ManageEventcollection.findOne({
       _id: new ObjectId(id),
     });
 
-    if (!result) {
+    if (!event) {
       return res.status(404).send({
         message: "Event not found.",
       });
     }
 
-    res.send(result);
+    res.send(event);
   } catch (error) {
     console.error("Event Details Error:", error);
 
@@ -198,17 +162,13 @@ app.get("/ManageEvents/:id", async (req, res) => {
   }
 });
 
-// =====================================
-// Join Event (Private)
-// =====================================
-
+// Join Event
 app.post("/join-event/:id", verifyUser, async (req, res) => {
   try {
     const { id } = req.params;
 
     if (!ObjectId.isValid(id)) {
       return res.status(400).send({
-        success: false,
         message: "Invalid event ID.",
       });
     }
@@ -219,27 +179,22 @@ app.post("/join-event/:id", verifyUser, async (req, res) => {
 
     if (!event) {
       return res.status(404).send({
-        success: false,
         message: "Event not found.",
       });
     }
 
-    // Event owner cannot join own event
     if (event.creatorEmail === req.user.email) {
       return res.status(400).send({
-        success: false,
         message: "You cannot join your own event.",
       });
     }
 
-    const joinedData = {
+    await JoinedEventscollection.insertOne({
       eventId: event._id,
       eventTitle: event.eventTitle,
       userEmail: req.user.email,
       joinedAt: new Date().toISOString(),
-    };
-
-    await JoinedEventscollection.insertOne(joinedData);
+    });
 
     res.status(201).send({
       success: true,
@@ -248,7 +203,6 @@ app.post("/join-event/:id", verifyUser, async (req, res) => {
   } catch (error) {
     if (error.code === 11000) {
       return res.status(409).send({
-        success: false,
         message: "You have already joined this event.",
       });
     }
@@ -256,16 +210,12 @@ app.post("/join-event/:id", verifyUser, async (req, res) => {
     console.error("Join Event Error:", error);
 
     res.status(500).send({
-      success: false,
       message: "Failed to join event.",
     });
   }
 });
 
-// =====================================
-// Check Joined Status (Private)
-// =====================================
-
+// Check Join Status
 app.get("/joined-events/:id", verifyUser, async (req, res) => {
   try {
     const { id } = req.params;
@@ -287,7 +237,7 @@ app.get("/joined-events/:id", verifyUser, async (req, res) => {
       joined: !!joinedEvent,
     });
   } catch (error) {
-    console.error("Check Joined Status Error:", error);
+    console.error("Join Status Error:", error);
 
     res.status(500).send({
       success: false,
@@ -296,11 +246,7 @@ app.get("/joined-events/:id", verifyUser, async (req, res) => {
   }
 });
 
-// =====================================
-// Joined Events (Private)
-// Sort by Event Date (Ascending)
-// =====================================
-
+// Joined Events
 app.get("/joined-events", verifyUser, async (req, res) => {
   try {
     const joinedRecords = await JoinedEventscollection
@@ -335,17 +281,12 @@ app.get("/joined-events", verifyUser, async (req, res) => {
     console.error("Joined Events Error:", error);
 
     res.status(500).send({
-      success: false,
       message: "Failed to get joined events.",
     });
   }
 });
 
-// =====================================
-// Leave Event (Private)
-// Delete only current user's Join record
-// =====================================
-
+// Leave Event - NEW API
 app.delete("/leave-event/:id", verifyUser, async (req, res) => {
   try {
     const { id } = req.params;
@@ -371,7 +312,7 @@ app.delete("/leave-event/:id", verifyUser, async (req, res) => {
 
     res.send({
       success: true,
-      message: "You have successfully left the event.",
+      message: "You have successfully left the event!",
     });
   } catch (error) {
     console.error("Leave Event Error:", error);
@@ -383,11 +324,7 @@ app.delete("/leave-event/:id", verifyUser, async (req, res) => {
   }
 });
 
-// =====================================
-// Edit Event (Private)
-// Only event owner can edit
-// =====================================
-
+// Edit Event - Owner Only
 app.patch("/ManageEvents/:id", verifyUser, async (req, res) => {
   try {
     const { id } = req.params;
@@ -437,7 +374,6 @@ app.patch("/ManageEvents/:id", verifyUser, async (req, res) => {
       });
     }
 
-    // Update saved event title in JoinedEvents
     if (updateData.eventTitle !== undefined) {
       await JoinedEventscollection.updateMany(
         { eventId: new ObjectId(id) },
@@ -448,7 +384,6 @@ app.patch("/ManageEvents/:id", verifyUser, async (req, res) => {
     res.send({
       success: true,
       message: "Event updated successfully!",
-      result,
     });
   } catch (error) {
     console.error("Edit Event Error:", error);
@@ -459,11 +394,7 @@ app.patch("/ManageEvents/:id", verifyUser, async (req, res) => {
   }
 });
 
-// =====================================
-// Delete Event (Private)
-// Only event owner can delete
-// =====================================
-
+// Delete Event - Owner Only
 app.delete("/ManageEvents/:id", verifyUser, async (req, res) => {
   try {
     const { id } = req.params;
@@ -485,7 +416,6 @@ app.delete("/ManageEvents/:id", verifyUser, async (req, res) => {
       });
     }
 
-    // Delete related join records
     await JoinedEventscollection.deleteMany({
       eventId: new ObjectId(id),
     });
@@ -503,10 +433,7 @@ app.delete("/ManageEvents/:id", verifyUser, async (req, res) => {
   }
 });
 
-// =====================================
 // Root Route
-// =====================================
-
 app.get("/", (req, res) => {
   res.send("KindNest server is fine!");
 });
