@@ -163,7 +163,7 @@ app.get("/ManageEvents", verifyToken, async (req, res) => {
 });
 
 // EVENT DETAILS
-app.get("/ManageEvents/:id", async (req, res) => {
+app.get("/ManageEvents/:id",verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
 
